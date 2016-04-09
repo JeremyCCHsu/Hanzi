@@ -55,6 +55,20 @@ def read_imgs(iDir):
     return imgs, labels
 
 
+# def findBusou(i, top10):
+#     '''
+#     0: not in the top 10 busous
+#     '''
+#     k = -1;
+#     for j in range(len(top10)-1):
+#         if i > top10[j] and i < top10[j+1]:
+#             k = j
+#             break
+#     if k > -1 and k % 2 == 0:
+#         return k/2 +1
+#     else:
+#         return 0
+
 def findBusou(i, top10):
     '''
     0: not in the top 10 busous
@@ -65,9 +79,10 @@ def findBusou(i, top10):
             k = j
             break
     if k > -1 and k % 2 == 0:
-        return k/2 +1
+        return k/2
     else:
-        return 0
+        return 10
+
 
 def toBushou(labels):
     '''
@@ -147,7 +162,7 @@ assert(imgs[0].shape[0] == imgs[0].shape[1])    # check square input
 
 # idx = all(labs > 0)
 labs = np.array(labs)
-idx = labs > 0
+idx = labs < 10
 
 # imgs = imgs[idx]
 
@@ -161,6 +176,18 @@ labs = labs[idx]
 
 szTrn = 7000   # Total: 7459
 # szImg = imgs[0].shape[0]
+
+# Class 0: 632
+# Class 1: 754
+# Class 2: 475
+# Class 3: 579
+# Class 4: 1014
+# Class 5: 1077
+# Class 6: 445
+# Class 7: 572
+# Class 8: 979
+# Class 9: 932
+
 
 x = zip(imgs, labs)
 np.random.shuffle(x)
@@ -199,7 +226,7 @@ lab_y_vld = lab_vld.astype(np.int64)
 # max-pooling (tf.nn.max_pool)
 # 3 layers
 # szImg = 100
-szBatch = 128
+szBatch = 64
 
 szPatch1 = 5
 szPatch2 = 5
@@ -280,7 +307,8 @@ def _variable_with_weight_decay(name, shape, stddev, wd):
     tf.add_to_collection('losses', weight_decay)
   return var
 
-a2 = 1e-1   # L1=2.6821e-01, L2=6.2035e-03, Sim=2.0267e+00
+# a2 = 1e-1   # L1=2.6821e-01, L2=6.2035e-03, Sim=2.0267e+00
+a2 = 1e-6
 stddev = 1e-4
 graph = tf.Graph()
 with graph.as_default():
@@ -314,8 +342,8 @@ with graph.as_default():
         ksize=[1, ksize, ksize, 1],
         strides=[1, kstrd, kstrd, 1],
         padding='VALID')
-    L2_on_w1 = tf.reduce_mean(tf.reduce_sum(tf.square(W1), [0, 1]))
-    L1_on_w1 = tf.reduce_mean(tf.reduce_sum(tf.abs(W1), [0, 1]))
+    L2_on_w1 = tf.reduce_sum(tf.reduce_sum(tf.square(W1), [0, 1]))
+    L1_on_w1 = tf.reduce_sum(tf.reduce_sum(tf.abs(W1), [0, 1]))
     # Conv 2
     with tf.variable_scope('conv2') as scope:
         W2 = tf.Variable(
@@ -340,8 +368,8 @@ with graph.as_default():
         ksize=[1, ksize, ksize, 1],
         strides=[1, kstrd, kstrd, 1],
         padding='VALID')
-    L2_on_w2 = tf.reduce_mean(tf.reduce_sum(tf.square(W2), [0, 1]))
-    L1_on_w2 = tf.reduce_mean(tf.reduce_sum(tf.abs(W2), [0, 1]))
+    L2_on_w2 = tf.reduce_sum(tf.reduce_sum(tf.square(W2), [0, 1]))
+    L1_on_w2 = tf.reduce_sum(tf.reduce_sum(tf.abs(W2), [0, 1]))
     # Conv 3
     with tf.variable_scope('conv3') as scope:
         W3 = tf.Variable(
@@ -367,8 +395,8 @@ with graph.as_default():
         ksize=[1, ksize, ksize, 1],
         strides=[1, kstrd, kstrd, 1],
         padding='VALID')
-    L2_on_w3 = tf.reduce_mean(tf.reduce_sum(tf.square(W3), [0, 1]))
-    L1_on_w3 = tf.reduce_mean(tf.reduce_sum(tf.abs(W3), [0, 1]))
+    L2_on_w3 = tf.reduce_sum(tf.reduce_sum(tf.square(W3), [0, 1]))
+    L1_on_w3 = tf.reduce_sum(tf.reduce_sum(tf.abs(W3), [0, 1]))
     # Locals
     dim = 1
     for d in p3.get_shape()[1:].as_list():
@@ -380,8 +408,8 @@ with graph.as_default():
             stddev=1.0/dim))
     bf1 = tf.Variable(tf.zeros([nHidden1]))
     hf1 = tf.nn.relu(tf.matmul(Xf, Wf1) + bf1)
-    L2_on_wf1 = tf.reduce_mean(tf.reduce_sum(tf.square(Wf1), 0))
-    L1_on_wf1 = tf.reduce_mean(tf.reduce_sum(tf.abs(Wf1), 0))
+    L2_on_wf1 = tf.reduce_sum(tf.reduce_sum(tf.square(Wf1), 0))
+    L1_on_wf1 = tf.reduce_sum(tf.reduce_sum(tf.abs(Wf1), 0))
     Wf2 = tf.Variable(
         tf.truncated_normal(
             shape=[nHidden1, nHidden2],
@@ -393,13 +421,13 @@ with graph.as_default():
             shape=[nHidden2, nClass],
             stddev=1.0/nHidden2))
     bf3 = tf.Variable(tf.zeros([nClass]))
-    L2_on_wf2 = tf.reduce_mean(tf.reduce_sum(tf.square(Wf2), 0))
-    L1_on_wf2 = tf.reduce_mean(tf.reduce_sum(tf.abs(Wf2), 0))
+    L2_on_wf2 = tf.reduce_sum(tf.reduce_sum(tf.square(Wf2), 0))
+    L1_on_wf2 = tf.reduce_sum(tf.reduce_sum(tf.abs(Wf2), 0))
     logits = tf.matmul(hf2, Wf3) + bf3
     Yo = tf.nn.softmax(logits)
     # simi_loss = tf.nn.sparse_softmax_cross_entropy_with_logits(
     #     logits, Yi)
-    simi_loss = tf.reduce_mean(
+    simi_loss = tf.reduce_sum(
         tf.nn.sparse_softmax_cross_entropy_with_logits(
             logits, Yi),
         name='cross_entropy_mean')
@@ -407,7 +435,8 @@ with graph.as_default():
     L1_loss = a2*(L1_on_w1 + L1_on_w2 + L1_on_w3 + L1_on_wf1 + L1_on_wf2)
     L2_loss = a2*(L2_on_w1 + L2_on_w2 + L2_on_w3 + L2_on_wf1 + L2_on_wf2)
     loss = simi_loss + L1_loss + L2_loss
-    train = tf.train.AdagradOptimizer(lr).minimize(loss)
+    # train = tf.train.AdagradOptimizer(lr).minimize(loss)
+    train = tf.train.MomentumOptimizer(lr, 0.95).minimize(loss)
     # tf.add_to_collection('losses', L1_loss)
     # tf.add_to_collection('losses', L2_loss)
     tf.scalar_summary(simi_loss.op.name, simi_loss)
@@ -447,17 +476,17 @@ for epoch in range(nEpoch):
         if cursor + szBatch >= nSmp:
             cursor = (cursor + szBatch) % nSmp
         index = range(cursor, cursor+szBatch)
-        # noise = truncnorm.rvs(
-        #     a= 0.0, 
-        #     b=0.5, 
-        #     loc=0, 
-        #     scale=0.1, 
-        #     size=(szBatch, szImg, szImg, 1))
-        # batch_x = img_trn[index] + noise
-        batch_x = img_trn[index]
+        noise = truncnorm.rvs(
+            a= 0.0, 
+            b=0.6, 
+            loc=0, 
+            scale=0.2, 
+            size=(szBatch, szImg, szImg, 1))
+        batch_x = img_trn[index] + noise
+        # batch_x = img_trn[index]
         batch_y = lab_y_trn[index]
         # 1e-2: explode, 1e-3: snail, 1e-4: frozen 1e-5: frozen
-        feed_dict = {Xi: batch_x, Yi: batch_y, lr: 1e-2}
+        feed_dict = {Xi: batch_x, Yi: batch_y, lr: 1e-4}
         _, sl, l1, l2, ls, tpk = session.run(
             [train, simi_loss, L1_loss, L2_loss, loss, top_k_op], 
             feed_dict=feed_dict)
@@ -465,7 +494,7 @@ for epoch in range(nEpoch):
         errl1 += l1
         errl2 += l2
         errSim += np.sum(sl)
-        tokens += tpk
+        tokens += np.sum(tpk)
     err /= nBatch
     errSim /= nBatch
     errl1 /= nBatch
@@ -488,20 +517,26 @@ for epoch in range(nEpoch):
             feed_dict=feed_dict)   
         summary_writer.add_summary(summary_str, epoch)
         total_hit = 0
-        for i in range(nBatchVld-1):
-            # if (i+1)*szBatch > nSmpVld:
-            #     i = (i+1)*szBatch % nSmpVld
-            # if cursor + szBatch >= nSmp:
-            #     cursor = (cursor + szBatch) % nSmp
-            index = range(i, i+szBatch)
-            batch_x = img_vld[index]
-            batch_y = lab_y_vld[index]
-            feed_dict = {Xi: batch_x, Yi: batch_y}
-            predict_hit = session.run(
-                [top_k_op], 
-                feed_dict=feed_dict)            
-            total_hit += np.sum(predict_hit)
-        prec = float(total_hit) / ((nBatchVld-1)*szBatch)
+        # for i in range(nBatchVld-1):
+        #     # if (i+1)*szBatch > nSmpVld:
+        #     #     i = (i+1)*szBatch % nSmpVld
+        #     # if cursor + szBatch >= nSmp:
+        #     #     cursor = (cursor + szBatch) % nSmp
+        #     index = range(i, i+szBatch)
+        #     batch_x = img_vld[index]
+        #     batch_y = lab_y_vld[index]
+        #     feed_dict = {Xi: batch_x, Yi: batch_y}
+        #     predict_hit = session.run(
+        #         [top_k_op], 
+        #         feed_dict=feed_dict)            
+        #     total_hit += np.sum(predict_hit)
+        feed_dict = {Xi: img_vld[index], Yi: lab_y_vld[index]}
+        predict_hit = session.run(
+            [top_k_op], 
+            feed_dict=feed_dict)            
+        # total_hit += np.sum(predict_hit)
+        # prec = float(total_hit) / ((nBatchVld-1)*szBatch)
+        prec = np.sum(predict_hit) /nSmpVld
         print 'Validation precision: %.4f' % prec
 
 
