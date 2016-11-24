@@ -1,6 +1,9 @@
+ChineseGlyphs/
+TWKai98*/
 *.ckpt*
 checkpoint
 *.meta
 *.png
 */*
+*.pyc
 

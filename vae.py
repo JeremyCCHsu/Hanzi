@@ -23,15 +23,31 @@ Issues for Hanzi:
   2. Bushous 'mouth' and 'girl' are ruined.
   3. While reonstruction, bushous are correct, but the main part
      are all distorted.
+  4. There are a lot of trick in optimization. 
+      It takes only 200 epoch forRMSProp to achieve about the same loss
+      as Adam.
+
+
+See Also:
+  1. http://otoro.net/
+  2. http://www.genekogan.com/works/a-book-from-the-sky.html
 '''
 
 import numpy as np
 import tensorflow as tf
 
-import matplotlib.pyplot as plt
+
+# import matplotlib.pyplot as plt
 # %matplotlib inline
+import matplotlib
+matplotlib.use('Agg')
+import matplotlib.pyplot as plt
+
 from scipy import misc
 from os import path
+import re
+
+
 
 np.random.seed(0)
 tf.set_random_seed(0)
@@ -41,6 +57,22 @@ tf.set_random_seed(0)
 # n_samples = mnist.train.num_examples
 
 # from hanzi2_1 import read_imgs
+def _activation_summary(x):
+  """Helper to create summaries for activations.
+  Creates a summary that provides a histogram of activations.
+  Creates a summary that measure the sparsity of activations.
+  Args:
+    x: Tensor
+  Returns:
+    nothing
+  """
+  # Remove 'tower_[0-9]/' from the name in case this is a multi-GPU training
+  # session. This helps the clarity of presentation on tensorboard.
+  # tensor_name = re.sub('%s_[0-9]*/' % TOWER_NAME, '', x.op.name)
+  tensor_name = x.op.name
+  tf.histogram_summary(tensor_name + '/activations', x)
+  tf.scalar_summary(tensor_name + '/sparsity', tf.nn.zero_fraction(x))
+
 
 
 class IBatchGenerator(object):
@@ -226,25 +258,29 @@ class VariationalAutoencoder(object):
                             n_input, n_z):
         all_weights = dict()
         all_weights['weights_recog'] = {
-            'h1': tf.Variable(xavier_init(n_input, n_hidden_recog_1)),
-            'h2': tf.Variable(xavier_init(n_hidden_recog_1, n_hidden_recog_2)),
-            'out_mean': tf.Variable(xavier_init(n_hidden_recog_2, n_z)),
-            'out_log_sigma': tf.Variable(xavier_init(n_hidden_recog_2, n_z))}
+            'h1': tf.Variable(xavier_init(n_input, n_hidden_recog_1), name='r-h1'),
+            'h2': tf.Variable(xavier_init(n_hidden_recog_1, n_hidden_recog_2), name='r-h2'),
+            'out_mean': tf.Variable(xavier_init(n_hidden_recog_2, n_z), name='r-oMean'),
+            'out_log_sigma': tf.Variable(xavier_init(n_hidden_recog_2, n_z), name='r-logS')}
         all_weights['biases_recog'] = {
             'b1': tf.Variable(tf.zeros([n_hidden_recog_1], dtype=tf.float32)),
             'b2': tf.Variable(tf.zeros([n_hidden_recog_2], dtype=tf.float32)),
             'out_mean': tf.Variable(tf.zeros([n_z], dtype=tf.float32)),
             'out_log_sigma': tf.Variable(tf.zeros([n_z], dtype=tf.float32))}
         all_weights['weights_gener'] = {
-            'h1': tf.Variable(xavier_init(n_z, n_hidden_gener_1)),
-            'h2': tf.Variable(xavier_init(n_hidden_gener_1, n_hidden_gener_2)),
-            'out_mean': tf.Variable(xavier_init(n_hidden_gener_2, n_input)),
-            'out_log_sigma': tf.Variable(xavier_init(n_hidden_gener_2, n_input))}
+            'h1': tf.Variable(xavier_init(n_z, n_hidden_gener_1), name='g-h1'),
+            'h2': tf.Variable(xavier_init(n_hidden_gener_1, n_hidden_gener_2), name='g-h2'),
+            'out_mean': tf.Variable(xavier_init(n_hidden_gener_2, n_input), name='g-oMean'),
+            'out_log_sigma': tf.Variable(xavier_init(n_hidden_gener_2, n_input), name='g-logS')}
         all_weights['biases_gener'] = {
             'b1': tf.Variable(tf.zeros([n_hidden_gener_1], dtype=tf.float32)),
             'b2': tf.Variable(tf.zeros([n_hidden_gener_2], dtype=tf.float32)),
             'out_mean': tf.Variable(tf.zeros([n_input], dtype=tf.float32)),
             'out_log_sigma': tf.Variable(tf.zeros([n_input], dtype=tf.float32))}
+        for nwk in ['weights_recog', 'weights_gener']:
+            for name in ['h1', 'h2', 'out_mean', 'out_log_sigma',]:
+                _activation_summary(all_weights[nwk][name])
+        self.summary_op = tf.merge_all_summaries()
         return all_weights      
     def _recognition_network(self, weights, biases):
         # Generate probabilistic encoder (recognition network), which
@@ -297,16 +333,36 @@ class VariationalAutoencoder(object):
                                            - tf.exp(self.z_log_sigma_sq), 1)
         self.cost = tf.reduce_mean(reconstr_loss + latent_loss)   # average over batch
         # Use ADAM optimizer
-        self.optimizer = \
-            tf.train.AdamOptimizer(learning_rate=self.learning_rate).minimize(self.cost)
+        self.reconst_loss = tf.reduce_mean(reconstr_loss)
+        self.latent_loss = tf.reduce_mean(latent_loss)
+        # self.optimizer = \
+        #     tf.train.AdamOptimizer(
+        #         learning_rate=self.learning_rate,
+        #         beta1=0.9,
+        #         beta2=0.999,
+        #         epsilon=0.1,
+        #         ).minimize(self.cost)
+        # self.optimizer = \
+        #     tf.train.AdagradOptimizer(learning_rate=self.learning_rate).minimize(self.cost)
+        self.optimizer = tf.train.RMSPropOptimizer(
+            learning_rate=self.learning_rate, 
+            decay=0.9, 
+            momentum=1e-5, 
+            epsilon=1e-10).minimize(self.cost)
+        # self.optimizer = \
+        #     tf.train.GradientDescentOptimizer(
+        #         learning_rate=self.learning_rate).minimize(self.cost)
+        
     def partial_fit(self, X):
         """Train model based on mini-batch of input data.
         
         Return cost of mini-batch.
         """
-        opt, cost = self.sess.run((self.optimizer, self.cost), 
-                                  feed_dict={self.x: X})
-        return cost
+        opt, rc, lc, sum_str = self.sess.run(
+            (self.optimizer, self.reconst_loss, 
+             self.latent_loss, self.summary_op), 
+            feed_dict={self.x: X})
+        return rc, lc, sum_str
     def transform(self, X):
         """Transform data by mapping it into the latent space."""
         # Note: This maps to mean of distribution, we could alternatively
@@ -329,25 +385,67 @@ class VariationalAutoencoder(object):
         """ Use VAE to reconstruct given data. """
         return self.sess.run(self.x_reconstr_mean, 
                              feed_dict={self.x: X})
-
+    def __del__(self):
+        self.sess.close()
+        # super(type(self), self).__del__()
 
 
 
 # 
-iDir = 'TWKai98_50x50'
+
+def draw(vae_2d, img_test, batch_size, szImg=50, grid=10):
+    # szImg = 50
+    # n = 12
+    # img_test = imgs[:128, :]
+    x_reconstruct = vae_2d.reconstruct(img_test)
+    img_test = np.reshape(img_test, (batch_size, szImg, szImg))
+    # x_reconstruct = vae_2d.reconstruct(test.reshape(128, 2500))
+    x_reconstruct = np.reshape(x_reconstruct, (batch_size, szImg, szImg))
+    canvas = np.empty((szImg*grid, szImg*grid))
+    canvas0 = np.empty((szImg*grid, szImg*grid))
+    for i in range(grid):
+        for j in range(grid):
+            canvas[(grid-i-1)*szImg:(grid-i)*szImg, j*szImg:(j+1)*szImg] = \
+                x_reconstruct[i*8 +j, :, :]
+            canvas0[(grid-i-1)*szImg:(grid-i)*szImg, j*szImg:(j+1)*szImg] = \
+                img_test[i*8 +j, :, :]
+
+    plt.figure(figsize=(32, 40))
+    plt.imshow(canvas, origin="upper", cmap='gray')
+    plt.tight_layout()
+    plt.savefig('vae_reconst.png')
+    plt.close()
+
+    plt.figure(figsize=(32, 40))        
+    plt.imshow(canvas0, origin="upper", cmap='gray')
+    plt.tight_layout()
+    plt.savefig('vae_original.png')
+    plt.close()
+
+
+
+# 
+szImg = 28
+iDir = 'TWKai98_%dx%d' % (szImg, szImg)
 imgs = read(iDir)   # Top 10 Bushou
 # imgs, labels = read_imgs(iDir)
+# imgs = np.asarray(imgs)
 # imgs = np.reshape(imgs, (-1, imgs.shape[1]*imgs.shape[2]))
 
 def train(network_architecture, learning_rate=0.001,
-          batch_size=100, training_epochs=10, display_step=5):
+          batch_size=100, training_epochs=10, display_step=15):
     vae = VariationalAutoencoder(network_architecture, 
                                  learning_rate=learning_rate, 
                                  batch_size=batch_size)
+    summary_writer = tf.train.SummaryWriter(logdir='tmp')
+
     # Training cycle
     n_samples = imgs.shape[0]
+    img_test = imgs[:batch_size, :]
+    saver = tf.train.Saver(tf.all_variables())
     for epoch in range(training_epochs):
-        avg_cost = 0.
+        avg_rc = 0.
+        avg_lc = 0.
         total_batch = int(n_samples / batch_size)
         # Loop over all batches
         # for i in range(total_batch):
@@ -356,13 +454,24 @@ def train(network_architecture, learning_rate=0.001,
         batches = XBatchGenerator(imgs, batch_size)
         for batch_xs in batches:
             # Fit training using batch data
-            cost = vae.partial_fit(batch_xs)
+            rc, lc, summary_str = vae.partial_fit(batch_xs)
             # Compute average loss
-            avg_cost += cost / n_samples * batch_size
+            avg_rc += rc / n_samples * batch_size
+            avg_lc += lc / n_samples * batch_size
+    
+        summary_writer.add_summary(summary_str, epoch)
         # Display logs per epoch step
         if epoch % display_step == 0:
-            print "Epoch:", '%04d' % (epoch+1), \
-                  "cost=", "{:.9f}".format(avg_cost)
+            # print "Epoch:", '%04d' % (epoch+1), \
+            #       "cost=", "{:.9f}".format(avg_cost)
+            print 'Epoch %04d, reconst cost=%.8e, latent cost=%.8e' % (
+                epoch, avg_rc, avg_lc)
+            if not np.isfinite(rc):
+                break
+            else:
+                saver.save(vae.sess, 'vae_test_model')
+            if epoch % (display_step*5) == 0:
+                draw(vae, img_test, batch_size, szImg)
     return vae
 
 
@@ -403,14 +512,14 @@ network_architecture = \
          n_hidden_recog_2=500, # 2nd layer encoder neurons
          n_hidden_gener_1=500, # 1st layer decoder neurons
          n_hidden_gener_2=500, # 2nd layer decoder neurons
-         n_input=2500, # MNIST data input (img shape: 28*28)
+         n_input=szImg*szImg, # MNIST data input (img shape: 28*28)
          n_z=2)  # dimensionality of latent space
 
 vae_2d = train(
     network_architecture, 
-    batch_size=128,
-    learning_rate=1e-4,
-    training_epochs=76)
+    batch_size=256,
+    learning_rate=1e-3,
+    training_epochs=200)
 
 
 # x_sample, y_sample = mnist.test.next_batch(5000)
@@ -421,6 +530,8 @@ vae_2d = train(
 
 
 # 
+
+
 nx = ny = 25
 x_values = np.linspace(-7, 7, nx)
 y_values = np.linspace(-7, 7, ny)
@@ -443,26 +554,11 @@ plt.close()
 
 
 
-idx1 = las > 20200
-idx2 = las < (20200+128+1)
-idxa = idx1 * idx2
-test = np.asarray(ims)[idxa]
+# idx1 = las > 20200
+# idx2 = las < (20200+128+1)
+# idxa = idx1 * idx2
+# test = np.asarray(ims)[idxa]
 
-n = 12
-# x_reconstruct = vae_2d.reconstruct(imgs[:128, :])
-x_reconstruct = vae_2d.reconstruct(test.reshape(128, 2500))
-x_reconstruct = np.reshape(x_reconstruct, (128, szImg, szImg))
-canvas = np.empty((szImg*12, szImg*12))
-for i in range(12):
-    for j in range(12):
-        canvas[(n-i-1)*szImg:(n-i)*szImg, j*szImg:(j+1)*szImg] = \
-            x_reconstruct[i*8 +j, :, :]
-
-plt.figure(figsize=(32, 40))        
-plt.imshow(canvas, origin="upper")
-plt.tight_layout()
-plt.savefig('vae_reconst.png')
-plt.close()
 
 
 
